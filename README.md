@@ -2,6 +2,8 @@
 
 Mobile-first warehouse and manufacturing operation pages for ERPNext.
 
+独立仓库为 [yueweiit/deeplinkerp-mobile_operations](https://github.com/yueweiit/deeplinkerp-mobile_operations)，开发主线和 PR 目标均为 `main`。Frappe App 名保持 `mobile_operations`，应用依赖仍由 `hooks.py` 中的 `required_apps` 声明。
+
 ## Mobile entry
 
 Open `/mobile` on a phone. Unauthenticated users are sent to `/mobile/login`,
