@@ -178,7 +178,7 @@ class MobileMaterialRequestPage {
 			<article class="mobile-mr-request-card" data-open-request="${escape_attribute(request.name)}">
 				<div class="mobile-mr-card-top">
 					<div class="mobile-mr-card-number">${escape_html(request.request_no || request.name)}</div>
-					<span class="mobile-mr-status ${status_tone(request.primary_bucket)}">${escape_html(request.status_label)}</span>
+					<span class="mobile-mr-status ${status_tone(request.primary_bucket)}">${escape_html(__(request.status_label))}</span>
 				</div>
 				<div class="mobile-mr-card-title">${escape_html(request.item_preview || request.title || __("暂无明细"))}</div>
 				<div class="mobile-mr-card-meta">
@@ -230,7 +230,7 @@ class MobileMaterialRequestPage {
 			<div class="mobile-mr-detail">
 				<div class="mobile-mr-detail-header">
 					<button class="mobile-mr-back" type="button" data-action="back" aria-label="${__("返回")}"><i class="fa fa-arrow-left"></i></button>
-					<div class="mobile-mr-detail-heading"><h2>${escape_html(detail.request_no || detail.name)}</h2><p>${escape_html(detail.status_label)} · ${escape_html(detail.material_request_type || "-")}</p></div>
+					<div class="mobile-mr-detail-heading"><h2>${escape_html(detail.request_no || detail.name)}</h2><p>${escape_html(__(detail.status_label))} · ${escape_html(detail.material_request_type || "-")}</p></div>
 				</div>
 				<div class="mobile-mr-detail-summary"><div class="mobile-mr-detail-summary-grid">
 					${detail_field(__("需求标题"), detail.title || "-")}

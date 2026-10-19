@@ -2,6 +2,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 import frappe
+from frappe.translate import get_all_translations, get_translations_from_apps
 
 no_cache = 1
 
@@ -22,4 +23,8 @@ def get_context(context):
 		Path(frappe.get_app_path("mobile_operations", "public", folder, filename)).stat().st_mtime_ns
 		for folder, filename in (("js", "mobile_items.js"), ("css", "mobile_items.css"))
 	)
+	# Website boot omits Desk's dictionary; load this App's keys before its views.
+	translations = get_translations_from_apps(frappe.local.lang, apps=["mobile_operations"])
+	merged = get_all_translations(frappe.local.lang)
+	context.mobile_translations = {key: merged.get(key, value) for key, value in translations.items()}
 	return context

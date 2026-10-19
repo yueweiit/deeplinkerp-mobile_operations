@@ -17,6 +17,13 @@
 <div id="mobile-app" class="mobile-app-root"></div>
 {% endblock %}
 
+{% block base_scripts %}
+{{ super() }}
+<script>
+Object.assign(frappe._messages, {{ mobile_translations | tojson }});
+</script>
+{% endblock %}
+
 {% block body_include %}
 {{ super() }}
 {{ include_script('/assets/mobile_operations/js/mobile_bom.js?v=' ~ mobile_bom_asset_version) }}

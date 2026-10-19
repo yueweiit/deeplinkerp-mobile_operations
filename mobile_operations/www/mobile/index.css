@@ -1358,7 +1358,8 @@ body {
 	margin-top: 6px;
 	color: #6b7280;
 	font-size: 12px;
-	white-space: nowrap;
+	white-space: normal;
+	overflow-wrap: break-word;
 }
 
 .mobile-mr-section-title {
@@ -1511,8 +1512,8 @@ body {
 	font-size: 13px;
 }
 
-.mobile-mr-request-list { display: grid; gap: 10px; }
-.mobile-mr-request-card { padding: 13px; cursor: pointer; }
+.mobile-mr-request-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.mobile-mr-request-card { min-width: 0; padding: 13px; overflow-wrap: anywhere; cursor: pointer; }
 .mobile-mr-load-more {
 	grid-column: 1 / -1;
 	min-height: 38px;
@@ -1571,7 +1572,7 @@ body {
 .mobile-mr-progress { height: 5px; margin-top: 5px; border-radius: 99px; background: #edf0f5; overflow: hidden; }
 .mobile-mr-progress-bar { height: 100%; border-radius: inherit; background: var(--mobile-mr-primary); }
 .mobile-mr-card-footer { margin-top: 11px; padding-top: 10px; border-top: 1px solid #eef0f4; }
-.mobile-mr-view-button { min-height: 32px; padding: 5px 12px; border-color: var(--mobile-mr-primary); color: var(--mobile-mr-primary); }
+.mobile-mr-view-button { flex: 0 0 auto; min-height: 32px; padding: 5px 12px; border-color: var(--mobile-mr-primary); color: var(--mobile-mr-primary); white-space: nowrap; }
 
 .mobile-mr-empty,
 .mobile-mr-loading,

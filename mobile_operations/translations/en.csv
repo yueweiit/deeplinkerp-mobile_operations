@@ -386,3 +386,11 @@
 "缺少物料编码","Item code is required"
 "物料编码 {0} 已存在","Item code {0} already exists"
 "请选择末级物料组","Select a leaf item group"
+当前用户没有提交物料移动的权限,The current user does not have permission to submit stock movements
+物料数据格式不正确,Invalid item data format
+请填写物料编码并选择物料组和库存单位,Enter the item code and select an item group and stock unit
+操作失败，请重试,Operation failed. Try again
+按物料和库位快速查询库存,Quickly search stock by item and location
+邮箱 / 用户名,Email / Username
+登录,Log in
+库存单位,Stock UOM

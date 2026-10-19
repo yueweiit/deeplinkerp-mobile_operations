@@ -388,3 +388,10 @@
 "默认 BOM","BOM predeterminada"
 按物料和库位快速查询库存,Consultar rápidamente el inventario por artículo y ubicación
 操作失败，请重试,La operación falló. Inténtelo de nuevo.
+当前用户没有提交物料移动的权限,El usuario actual no tiene permiso para enviar movimientos de existencias
+物料数据格式不正确,El formato de los datos del artículo no es válido
+请填写物料编码并选择物料组和库存单位,Introduzca el código del artículo y seleccione un grupo de artículos y una unidad de existencias
+邮箱 / 用户名,Correo electrónico / Nombre de usuario
+登录,Iniciar sesión
+Login,Iniciar sesión
+库存单位,Unidad de stock
