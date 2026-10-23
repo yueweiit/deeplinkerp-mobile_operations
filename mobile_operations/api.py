@@ -1,3 +1,5 @@
+import math
+
 import frappe
 import frappe.defaults
 from frappe import _
@@ -111,7 +113,51 @@ def _search_mobile_items(search=None, limit=20, min_length=2):
 	return query.orderby(rank, order=Order.asc).orderby(item.name, order=Order.asc).run(as_dict=True)
 
 
-@frappe.whitelist()
+def _mobile_create_data(data, error_message):
+	try:
+		data = frappe.parse_json(data if data is not None else {})
+	except (TypeError, ValueError):
+		frappe.throw(error_message)
+	if not isinstance(data, dict):
+		frappe.throw(error_message)
+	for field in ("company", "material_request_type", "stock_entry_type", "purpose",
+		"set_warehouse", "set_from_warehouse", "from_warehouse", "to_warehouse",
+		"transaction_date", "schedule_date", "posting_date"):
+		if data.get(field) is not None and not isinstance(data[field], str):
+			frappe.throw(error_message)
+	items = data.get("items", [])
+	if not isinstance(items, list):
+		frappe.throw(error_message)
+	if not items:
+		frappe.throw(_("请至少添加一项物料"))
+	for index, row in enumerate(items, 1):
+		if not isinstance(row, dict) or any(
+			row.get(field) is not None and not isinstance(row[field], str)
+			for field in ("item_code", "uom", "warehouse", "from_warehouse", "schedule_date")
+		):
+			frappe.throw(_("第 {0} 行物料数据不正确").format(index))
+	return data
+
+
+def _mobile_item_quantities(row, index):
+	values = []
+	for field, label, default in (("qty", _("数量"), None), ("conversion_factor", _("单位换算系数"), 1)):
+		value = row.get(field)
+		if value is None or value == "":
+			value = default
+		try:
+			number = float(value) if not isinstance(value, bool) else 0
+		except (TypeError, ValueError, OverflowError):
+			number = 0
+		if not math.isfinite(number) or number <= 0:
+			frappe.throw(_("第 {0} 行的{1}必须为有限正数").format(index, label))
+		values.append(number)
+	if not math.isfinite(values[0] * values[1]) or values[0] * values[1] <= 0:
+		frappe.throw(_("第 {0} 行的库存数量超出有效范围").format(index))
+	return values
+
+
+@frappe.whitelist(methods=["POST"])
 def create_mobile_material_request(data=None, submit=0):
 	"""Create and optionally submit a Material Request from the mobile form."""
 	if not frappe.has_permission("Material Request", "create"):
@@ -120,9 +166,7 @@ def create_mobile_material_request(data=None, submit=0):
 	if should_submit and not frappe.has_permission("Material Request", "submit"):
 		frappe.throw(_("当前用户没有提交物料需求的权限"), frappe.PermissionError)
 
-	data = frappe.parse_json(data or {})
-	if not isinstance(data, dict):
-		frappe.throw(_("物料需求数据格式不正确"))
+	data = _mobile_create_data(data, _("物料需求数据格式不正确"))
 
 	request_type = (data.get("material_request_type") or "").strip()
 	type_field = frappe.get_meta("Material Request").get_field("material_request_type")
@@ -153,8 +197,8 @@ def create_mobile_material_request(data=None, submit=0):
 
 	for index, item_data in enumerate(items, start=1):
 		item_code = (item_data.get("item_code") or "").strip()
-		qty = flt(item_data.get("qty"))
-		if not item_code or qty <= 0:
+		qty, conversion_factor = _mobile_item_quantities(item_data, index)
+		if not item_code:
 			frappe.throw(_("第 {0} 行物料和数量不能为空").format(index))
 
 		item = frappe.get_cached_doc("Item", item_code)
@@ -169,7 +213,7 @@ def create_mobile_material_request(data=None, submit=0):
 				"qty": qty,
 				"uom": (item_data.get("uom") or item.stock_uom),
 				"stock_uom": item.stock_uom,
-				"conversion_factor": flt(item_data.get("conversion_factor")) or 1,
+				"conversion_factor": conversion_factor,
 				"schedule_date": item_data.get("schedule_date") or doc.schedule_date,
 				"warehouse": (item_data.get("warehouse") or doc.set_warehouse) or None,
 				"from_warehouse": ((item_data.get("from_warehouse") or doc.set_from_warehouse) or None) if request_type in transfer_types else None,
@@ -184,7 +228,7 @@ def create_mobile_material_request(data=None, submit=0):
 	return {"name": doc.name, "docstatus": doc.docstatus, "status": doc.status}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def submit_mobile_material_request(name=None):
 	"""Submit an existing draft Material Request from the mobile detail view."""
 	if not name:
@@ -201,7 +245,7 @@ def submit_mobile_material_request(name=None):
 	return {"name": doc.name, "docstatus": doc.docstatus, "status": doc.status}
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def issue_and_push_mobile_material_request(material_request_name=None, items=None):
 	"""Create the issue Stock Entry and push it to DLM from mobile."""
 	if not material_request_name:
@@ -214,7 +258,7 @@ def issue_and_push_mobile_material_request(material_request_name=None, items=Non
 	return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_mobile_material_request_stock_entry(material_request_name=None, items=None):
 	"""Create a draft Stock Entry for a manually created Material Request."""
 	if not material_request_name:
@@ -277,7 +321,7 @@ def search_mobile_stock_entry_items(search=None, limit=20):
 	return _search_mobile_items(search, limit)
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def create_mobile_stock_entry(data=None, submit=0):
 	"""Create and optionally submit a standalone Stock Entry from mobile."""
 	if not frappe.has_permission("Stock Entry", "create"):
@@ -286,9 +330,7 @@ def create_mobile_stock_entry(data=None, submit=0):
 	if should_submit and not frappe.has_permission("Stock Entry", "submit"):
 		frappe.throw(_("当前账号没有提交物料移动的权限"), frappe.PermissionError)
 
-	data = frappe.parse_json(data or {})
-	if not isinstance(data, dict):
-		frappe.throw(_("物料移动数据格式不正确"))
+	data = _mobile_create_data(data, _("物料移动数据格式不正确"))
 
 	company = (data.get("company") or "").strip()
 	if not company:
@@ -379,8 +421,8 @@ def create_mobile_stock_entry(data=None, submit=0):
 		if not isinstance(item_data, dict):
 			frappe.throw(_("第 {0} 行物料数据不正确").format(index))
 		item_code = (item_data.get("item_code") or "").strip()
-		qty = flt(item_data.get("qty"))
-		if not item_code or qty <= 0:
+		qty, conversion_factor = _mobile_item_quantities(item_data, index)
+		if not item_code:
 			frappe.throw(_("第 {0} 行物料和数量不能为空").format(index))
 
 		item = frappe.get_cached_doc("Item", item_code)
@@ -394,7 +436,7 @@ def create_mobile_stock_entry(data=None, submit=0):
 				"qty": qty,
 				"uom": item_data.get("uom") or item.stock_uom,
 				"stock_uom": item.stock_uom,
-				"conversion_factor": flt(item_data.get("conversion_factor")) or 1,
+				"conversion_factor": conversion_factor,
 				"s_warehouse": from_warehouse or None,
 				"t_warehouse": to_warehouse or None,
 			},
@@ -1208,7 +1250,7 @@ def _get_mobile_inventory_summary_data():
     return result
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def submit_mobile_stock_entry(name=None):
     """Submit a draft Stock Entry from the mobile detail view."""
     if not name:
@@ -1228,7 +1270,7 @@ def submit_mobile_stock_entry(name=None):
     }
 
 
-@frappe.whitelist()
+@frappe.whitelist(methods=["POST"])
 def push_mobile_stock_entry_to_dlm(name=None):
     """Push an eligible MES Stock Entry to DLM from mobile."""
     if not name:

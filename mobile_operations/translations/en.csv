@@ -394,3 +394,6 @@
 邮箱 / 用户名,Email / Username
 登录,Log in
 库存单位,Stock UOM
+单位换算系数,Unit conversion factor
+第 {0} 行的{1}必须为有限正数,Row {0}: {1} must be a finite positive number
+第 {0} 行的库存数量超出有效范围,Row {0}: stock quantity is outside the valid range

@@ -395,3 +395,6 @@
 登录,Iniciar sesión
 Login,Iniciar sesión
 库存单位,Unidad de stock
+单位换算系数,Factor de conversión de unidades
+第 {0} 行的{1}必须为有限正数,Fila {0}: {1} debe ser un número positivo finito
+第 {0} 行的库存数量超出有效范围,Fila {0}: la cantidad de inventario está fuera del intervalo válido
