@@ -155,8 +155,8 @@ class MobileOperationsApp {
 					<div class="mobile-home-section-heading"><h2>${__("工作提醒")}</h2><span>${__("需要及时处理")}</span></div>
 					<div class="mobile-home-reminder-grid">
 						<button class="mobile-home-reminder-card" data-route="/mobile/material-request"><strong data-region="home-in-progress">—</strong><span>${__("待处理物料需求")}</span></button>
-						<button class="mobile-home-reminder-card" data-route="/mobile/stock-entry"><strong data-region="home-stock-draft">—</strong><span>${__("待提交物料移动")}</span></button>
-						<button class="mobile-home-reminder-card" data-route="/mobile/stock-entry"><strong data-region="home-mes-pending">—</strong><span>${__("MES 待推送")}</span></button>
+						<button class="mobile-home-reminder-card" data-route="/mobile/stock-entry?status=draft"><strong data-region="home-stock-draft">—</strong><span>${__("待提交物料移动")}</span></button>
+						<button class="mobile-home-reminder-card" data-route="/mobile/stock-entry?status=mes_pending"><strong data-region="home-mes-pending">—</strong><span>${__("MES 待推送")}</span></button>
 					</div>
 				</section>
 				<section class="mobile-home-section">
@@ -1148,7 +1148,8 @@ class MobileStockEntryView {
 		this.request_sequence = 0;
 		this.page_size = 40;
 		this.offset = 0;
-		this.status = "all";
+		const requested_status = new URLSearchParams(window.location.search).get("status");
+		this.status = ["all", "draft", "submitted", "mes_pending"].includes(requested_status) ? requested_status : "all";
 		this.search_timer = null;
 		this.selected_name = this.get_route_name();
 		this.render_shell();
@@ -1179,6 +1180,7 @@ class MobileStockEntryView {
 							<button type="button" class="mobile-se-select-option is-selected" data-se-status-option data-value="all" role="option"><span>${__("全部状态")}</span></button>
 							<button type="button" class="mobile-se-select-option" data-se-status-option data-value="draft" role="option"><span>${__("草稿")}</span></button>
 							<button type="button" class="mobile-se-select-option" data-se-status-option data-value="submitted" role="option"><span>${__("已提交")}</span></button>
+							<button type="button" class="mobile-se-select-option" data-se-status-option data-value="mes_pending" role="option"><span>${__("MES 待推送")}</span></button>
 						</div>
 					</div>
 				</div>
@@ -1234,6 +1236,7 @@ class MobileStockEntryView {
 			all: __("全部状态"),
 			draft: __("草稿"),
 			submitted: __("已提交"),
+			mes_pending: __("MES 待推送"),
 		}[status] || __("全部状态");
 	}
 
@@ -1250,7 +1253,11 @@ class MobileStockEntryView {
 	}
 
 	set_status_filter(status, should_refresh = true) {
-		this.status = ["all", "draft", "submitted"].includes(status) ? status : "all";
+		this.status = ["all", "draft", "submitted", "mes_pending"].includes(status) ? status : "all";
+		if (this.app.route === "/mobile/stock-entry") {
+			const url = this.status === "all" ? "/mobile/stock-entry" : `/mobile/stock-entry?status=${this.status}`;
+			window.history.replaceState({}, "", url);
+		}
 		this.sync_status_filter();
 		this.hide_status_filter();
 		if (should_refresh) {
@@ -1328,7 +1335,7 @@ class MobileStockEntryView {
 	render_summary() {
 		const summary = this.data?.summary || [];
 		this.parent.querySelector("[data-region='summary']").innerHTML = summary.map((card) => {
-			const is_filter = ["all", "draft", "submitted"].includes(card.key);
+			const is_filter = ["all", "draft", "submitted", "mes_pending"].includes(card.key);
 			const tag = is_filter ? "button" : "div";
 			const attributes = is_filter ? ` data-se-status="${escape_attribute(card.key)}"` : "";
 			return `<${tag} class="mobile-se-summary-card${this.status === card.key ? " is-active" : ""}${card.tone ? ` is-${card.tone}` : ""}"${attributes}><strong>${format_integer(card.count)}</strong><span>${escape_html(card.label)}</span></${tag}>`;
@@ -1396,10 +1403,12 @@ class MobileStockEntryView {
 	}
 
 	go_list() {
-		window.history.pushState({}, "", "/mobile/stock-entry");
+		const url = this.status === "all" ? "/mobile/stock-entry" : `/mobile/stock-entry?status=${this.status}`;
+		window.history.pushState({}, "", url);
 		this.app.route = "/mobile/stock-entry";
 		this.selected_name = "";
 		this.render_shell();
+		this.sync_status_filter();
 		this.refresh();
 	}
 

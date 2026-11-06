@@ -4,12 +4,13 @@ import frappe
 import frappe.defaults
 from frappe import _
 from frappe.query_builder import Case, Order
-from frappe.query_builder.functions import Coalesce, Count
+from frappe.query_builder.functions import Cast, Coalesce, Count, CustomFunction, Sum
 from frappe.utils import cint, flt, nowdate
 from mes_integration.mes_integration.material_request import (
 	is_mes_material_request,
 )
 from mes_integration.mes_integration.settings import is_mes_integration_enabled
+from mes_integration.mes_integration.stock_entry import DLM_ISSUE_STOCK_ENTRY_TYPES
 
 
 ISSUE_TYPES = {
@@ -18,7 +19,7 @@ ISSUE_TYPES = {
     "Injection Molding Issuance",
 }
 
-STOCK_ENTRY_STATUS_FILTERS = {"all", "draft", "submitted"}
+STOCK_ENTRY_STATUS_FILTERS = {"all", "draft", "submitted", "mes_pending"}
 INVENTORY_STOCK_STATUS_FILTERS = {"all", "positive", "insufficient", "negative", "zero"}
 MOBILE_INVENTORY_SUMMARY_CACHE_TTL = 15
 STOCK_ENTRY_TYPE_LABELS = {
@@ -713,6 +714,8 @@ def get_mobile_stock_entry_dashboard(search=None, status="all", limit=40, offset
         filters = stock_entry.docstatus == 0
     elif status == "submitted":
         filters = stock_entry.docstatus == 1
+    elif status == "mes_pending":
+        filters = _get_mobile_mes_pending_filter(stock_entry)
 
     if search:
         search_value = f"%{search}%"
@@ -1155,8 +1158,8 @@ def _get_material_request_dashboard_filters(
     search=None,
     include_custom_request_no=False,
 ):
-    status = Coalesce(material_request.status, "")
-    transfer_status = Coalesce(material_request.transfer_status, "")
+    status = _case_sensitive_sql(Coalesce(material_request.status, ""))
+    transfer_status = _case_sensitive_sql(Coalesce(material_request.transfer_status, ""))
     progress = Coalesce(material_request.per_ordered, 0)
     exception = (material_request.docstatus == 2) | status.isin(("Stopped", "Cancelled"))
     not_exception = (material_request.docstatus != 2) & ~status.isin(("Stopped", "Cancelled"))
@@ -1174,7 +1177,7 @@ def _get_material_request_dashboard_filters(
             & not_in_transit
             & (material_request.docstatus == 1)
             & (progress <= 0)
-            & material_request.material_request_type.isin(tuple(ISSUE_TYPES))
+            & _case_sensitive_sql(material_request.material_request_type).isin(tuple(ISSUE_TYPES))
         ),
         "partial": (
             not_exception
@@ -1213,30 +1216,11 @@ def _get_mobile_inventory_summary_data():
 
     material_request_summary = []
     if frappe.has_permission("Material Request", "read"):
-        material_request_rows = frappe.get_list(
-            "Material Request",
-            fields=[
-                "docstatus",
-                "status",
-                "transfer_status",
-                "per_ordered",
-                "material_request_type",
-            ],
-            limit_page_length=0,
-        )
-        material_request_summary = _build_summary(material_request_rows)
+        material_request_summary = _get_mobile_material_request_summary()
 
     stock_entry_summary = []
     if frappe.has_permission("Stock Entry", "read"):
-        stock_entry_fields = ["name", "docstatus"]
-        if frappe.db.has_column("Stock Entry", "custom_mes_status"):
-            stock_entry_fields.append("custom_mes_status")
-        stock_entry_rows = frappe.get_list(
-            "Stock Entry",
-            fields=stock_entry_fields,
-            limit_page_length=0,
-        )
-        stock_entry_summary = _build_stock_entry_summary(stock_entry_rows)
+        stock_entry_summary = _get_mobile_stock_entry_summary()
 
     result = {
         "material_request": material_request_summary,
@@ -1248,6 +1232,95 @@ def _get_mobile_inventory_summary_data():
         expires_in_sec=MOBILE_INVENTORY_SUMMARY_CACHE_TTL,
     )
     return result
+
+
+def _get_mobile_material_request_summary():
+    material_request = frappe.qb.DocType("Material Request")
+    buckets = {
+        key: _get_material_request_dashboard_filters(material_request, key)[0]
+        for key in ("in_progress", "to_issue", "partial", "exception")
+    }
+    # The existing summary counts in-transit requests even when they are stopped.
+    buckets["transit"] = _case_sensitive_sql(material_request.transfer_status) == "In Transit"
+    fields = [Sum(Case().when(condition, 1).else_(0)).as_(key) for key, condition in buckets.items()]
+    counts = frappe.qb.get_query(
+        material_request, fields=fields, ignore_permissions=False
+    ).run(as_dict=True)[0]
+    return [
+        {"key": "in_progress", "label": _("进行中"), "count": cint(counts.get("in_progress"))},
+        {"key": "to_issue", "label": _("待发料"), "count": cint(counts.get("to_issue")), "tone": "warning"},
+        {"key": "partial", "label": _("部分完成"), "count": cint(counts.get("partial"))},
+        {"key": "transit", "label": _("调拨在途"), "count": cint(counts.get("transit")), "tone": "warning"},
+        {"key": "exception", "label": _("异常/停止"), "count": cint(counts.get("exception")), "tone": "danger"},
+    ]
+
+
+def _get_mobile_stock_entry_summary():
+    stock_entry = frappe.qb.DocType("Stock Entry")
+    fields = [
+        Count(stock_entry.name).as_("all"),
+        Sum(Case().when(stock_entry.docstatus == 0, 1).else_(0)).as_("draft"),
+        Sum(Case().when(stock_entry.docstatus == 1, 1).else_(0)).as_("submitted"),
+    ]
+    counts = frappe.qb.get_query(
+        stock_entry, fields=fields, ignore_permissions=False
+    ).run(as_dict=True)[0]
+    mes_pending = _get_permission_aware_count(stock_entry, _get_mobile_mes_pending_filter(stock_entry))
+    return [
+        {"key": "all", "label": _("全部"), "count": cint(counts.get("all"))},
+        {"key": "draft", "label": _("草稿"), "count": cint(counts.get("draft")), "tone": "warning"},
+        {"key": "submitted", "label": _("已提交"), "count": cint(counts.get("submitted"))},
+        {"key": "mes_pending", "label": _("待推送"), "count": mes_pending, "tone": "warning"},
+    ]
+
+
+def _case_sensitive_sql(value):
+    """Match Python's case-sensitive MES source and status checks on MariaDB."""
+    return Cast(value, "BINARY") if frappe.db.db_type == "mariadb" else value
+
+
+def _get_mobile_mes_pending_filter(stock_entry):
+    """Match the data prerequisites of the DLM issue action for visible Stock Entries."""
+    if not (
+        frappe.db.has_column("Stock Entry", "custom_mes_status")
+        and frappe.db.has_column("Company", "custom_enable_mes_integration")
+    ):
+        return stock_entry.name.isnull()
+
+    detail = frappe.qb.DocType("Stock Entry Detail")
+    material_request = frappe.qb.DocType("Material Request")
+    company = frappe.qb.DocType("Company")
+    mes_source = _case_sensitive_sql(material_request.name).like("MAT-MR-MES-%")
+    if frappe.db.has_column("Material Request", "custom_request_source"):
+        trim = CustomFunction("TRIM", ["value"])
+        source = _case_sensitive_sql(trim(Coalesce(material_request.custom_request_source, "")))
+        mes_source = (source == "MES") | ((source == "") & mes_source)
+
+    # get_issue_material_request only uses rows with positive effective quantity
+    # and rejects a Stock Entry linked to more than one such request.
+    effective_qty = Case().when(detail.transfer_qty != 0, detail.transfer_qty).else_(detail.qty)
+    mes_parents = (
+        frappe.qb.from_(detail)
+        .left_join(material_request)
+        .on(detail.material_request == material_request.name)
+        .select(detail.parent)
+        .where((detail.parenttype == "Stock Entry") & (effective_qty > 0))
+        .groupby(detail.parent)
+        .having(Count(detail.material_request).distinct() == 1)
+        .having(Sum(Case().when(mes_source, 1).else_(0)) > 0)
+    )
+    enabled_companies = (
+        frappe.qb.from_(company)
+        .select(company.name)
+        .where(company.custom_enable_mes_integration == 1)
+    )
+    return (
+        (stock_entry.docstatus == 1)
+        & _case_sensitive_sql(stock_entry.stock_entry_type).isin(tuple(DLM_ISSUE_STOCK_ENTRY_TYPES))
+        & (_case_sensitive_sql(Coalesce(stock_entry.custom_mes_status, "")) != "Pushed")
+        & stock_entry.company.isin(enabled_companies)
+        & stock_entry.name.isin(mes_parents)
+    )
 
 
 @frappe.whitelist(methods=["POST"])
@@ -1364,14 +1437,20 @@ def _build_mobile_stock_entry_detail(doc):
         )
     source_by_request = _get_material_request_sources(material_requests)
     source = _get_stock_entry_source(doc.get("items") or [], source_by_request)
-    is_mes = source == "MES"
+    issue_requests = {
+        row.get("material_request")
+        for row in doc.get("items") or []
+        if row.get("material_request") and flt(row.get("transfer_qty") or row.get("qty")) > 0
+    }
+    is_mes_issue = len(issue_requests) == 1 and source_by_request.get(next(iter(issue_requests))) == "MES"
     can_submit = bool(doc.docstatus == 0 and frappe.has_permission("Stock Entry", "submit", doc=doc))
     can_push = bool(
         doc.docstatus == 1
-        and is_mes
-        and doc.stock_entry_type in ISSUE_TYPES
+        and is_mes_issue
+        and doc.stock_entry_type in DLM_ISSUE_STOCK_ENTRY_TYPES
         and doc.get("custom_mes_status") != "Pushed"
         and is_mes_integration_enabled(doc.company)
+        and frappe.has_permission("Stock Entry", "write", doc=doc)
     )
     return {
         "name": doc.name,
@@ -1413,10 +1492,8 @@ def _get_material_request_sources(names):
     )
     sources = {name: "Manual" for name in names}
     for row in rows:
-        is_mes = (
-            has_source_field
-            and (row.get("custom_request_source") or "").strip() == "MES"
-        ) or str(row.get("name") or "").startswith("MAT-MR-MES-")
+        source = (row.get("custom_request_source") or "").strip() if has_source_field else ""
+        is_mes = source == "MES" if source else str(row.get("name") or "").startswith("MAT-MR-MES-")
         sources[row.get("name")] = "MES" if is_mes else "Manual"
     return sources
 
@@ -1425,44 +1502,6 @@ def _get_stock_entry_source(items, source_by_request):
     if any(source_by_request.get(item.get("material_request")) == "MES" for item in items):
         return "MES"
     return "Manual"
-
-
-def _build_stock_entry_summary(rows):
-    draft = sum(cint(row.get("docstatus")) == 0 for row in rows)
-    submitted = sum(cint(row.get("docstatus")) == 1 for row in rows)
-    names = [row.get("name") for row in rows if row.get("name")]
-    linked_rows = frappe.get_all(
-        "Stock Entry Detail",
-        filters={
-            "parenttype": "Stock Entry",
-            "parent": ["in", names],
-            "material_request": ["is", "set"],
-        },
-        fields=["parent", "material_request"],
-        distinct=True,
-        limit_page_length=0,
-    ) if names else []
-    source_by_request = _get_material_request_sources(
-        {row.get("material_request") for row in linked_rows if row.get("material_request")}
-    )
-    mes_parents = {
-        row.get("parent")
-        for row in linked_rows
-        if source_by_request.get(row.get("material_request")) == "MES"
-    }
-    mes_pending = sum(
-        row.get("name") in mes_parents
-        and cint(row.get("docstatus")) == 1
-        and row.get("custom_mes_status") != "Pushed"
-        for row in rows
-        if "custom_mes_status" in row
-    )
-    return [
-        {"key": "all", "label": _("全部"), "count": len(rows)},
-        {"key": "draft", "label": _("草稿"), "count": draft, "tone": "warning"},
-        {"key": "submitted", "label": _("已提交"), "count": submitted},
-        {"key": "mes_pending", "label": _("待推送"), "count": mes_pending, "tone": "warning"},
-    ]
 
 
 def _get_stock_entry_status(row):
@@ -1543,11 +1582,10 @@ def _build_mobile_request_row(row):
 
 
 def _get_request_source(row):
-	if (row.get("custom_request_source") or "").strip() == "MES":
-		return "MES"
-	if str(row.get("name") or "").startswith("MAT-MR-MES-"):
-		return "MES"
-	return "Manual"
+	source = (row.get("custom_request_source") or "").strip()
+	if source:
+		return "MES" if source == "MES" else "Manual"
+	return "MES" if str(row.get("name") or "").startswith("MAT-MR-MES-") else "Manual"
 
 
 def _add_item_summaries(requests):
@@ -1576,30 +1614,6 @@ def _add_item_summaries(requests):
             preview.append(_("等 {0} 项").format(len(items)))
         request["item_count"] = len(items)
         request["item_preview"] = "、".join(preview)
-
-
-def _build_summary(rows):
-    active = to_issue = partial = transit = exception = 0
-    for row in rows:
-        bucket = _get_primary_bucket(row)
-        if bucket == "exception":
-            exception += 1
-        elif bucket != "completed":
-            active += 1
-        if bucket == "to_issue":
-            to_issue += 1
-        elif bucket == "partial":
-            partial += 1
-        if row.get("transfer_status") == "In Transit":
-            transit += 1
-
-    return [
-        {"key": "in_progress", "label": _("进行中"), "count": active},
-        {"key": "to_issue", "label": _("待发料"), "count": to_issue, "tone": "warning"},
-        {"key": "partial", "label": _("部分完成"), "count": partial},
-        {"key": "transit", "label": _("调拨在途"), "count": transit, "tone": "warning"},
-        {"key": "exception", "label": _("异常/停止"), "count": exception, "tone": "danger"},
-    ]
 
 
 def _get_primary_bucket(row):
